@@ -1,35 +1,8 @@
-name: build-node-ios
+# Original Work Copyright (c) 2026 XLPOISTOP-prog
+# Modified Work Copyright (c) 2026 locationovo
+# Licensed under the MIT License.
 
-# Cross-compile Node.js for jailbroken iOS (arm64).
-#
-# Why this exists at all: this project runs on a phone that has no Mac, and the
-# published iOS Node builds each fail in their own way -- see the header of
-# node-ios/build-node-ios.sh. This builds one from source, with two fixes that
-# remove workarounds the other builds require at runtime.
-#
-# The build runs on GitHub's own macOS runners. No Mac of your own is involved,
-# and for a public repository the standard macOS runners are free.
-#
-# Two things decide how long a run takes:
-#
-#   * The runner. Standard macOS runners come in two shapes at the same free
-#     price: arm64 M1 with 3 cores and 7 GB (macos-14, macos-15), or Intel with
-#     4 cores and 14 GB (macos-15-intel, macos-13). The build is memory-bound --
-#     a cold -O3 V8 translation unit peaks around 3 GB -- so the Intel runner can
-#     carry more parallel compiles and finishes sooner. build-node-ios.sh sizes
-#     -j from the cores and the RAM, so either one works.
-#
-#   * Whether out/ came back from the cache. The patches touch headers that every
-#     V8 translation unit includes, so the *first* build of a given macro set is a
-#     full rebuild no matter what. Later runs restore out/ and rebuild only the
-#     files the patches touched, which turns three hours into minutes.
-#
-# CACHE_REV exists because of the second point. The cache key deliberately does
-# NOT include the patches -- otherwise every edit would throw the object files
-# away, which is the whole cost being avoided. Bump CACHE_REV when the *build
-# configuration* changes (compiler flags, configure arguments, a patch that
-# changes a .gyp file), because in those cases the cached objects are not merely
-# stale, they are wrong.
+name: build-node-ios-locationovo
 
 on:
   workflow_dispatch:
@@ -39,7 +12,7 @@ on:
         required: false
         default: "24.21.0"
       runner:
-        description: "macos-14 = arm64 3 cores/7 GB (free). macos-15-intel = x64; see the note above before using it."
+        description: "macos-14 = arm64 3 cores/7 GB (free). macos-15-intel = x64"
         required: false
         default: "macos-14"
   push:
@@ -48,43 +21,22 @@ on:
       - ".github/workflows/build-node-ios.yml"
 
 permissions:
-  # write, for the log branch below
   contents: write
 
 jobs:
   build:
-    # macos-14 is the free arm64 runner: 3 cores, 7 GB, so the build runs at -j2.
-    #
-    # macos-15-intel is the x64 image and is *probably* also a free standard
-    # runner -- GitHub's pricing table lists a standard "macOS 3-core or 4-core
-    # (M1 or Intel)" SKU, and a billed larger runner cannot be used without being
-    # created in the organisation's settings first, which has not been done here.
-    # But the same image's other label is `macos-15-large`, which *is* the billed
-    # 12-core SKU, and nothing in the runner-images label table distinguishes
-    # them. So it is not the default: select it from the dispatch input and read
-    # machine-<run>.txt from the ci-logs branch, which the first step publishes
-    # within about a minute, to confirm which one you got before it costs
-    # anything. If it reports 4 cores, it is the free standard runner and is
-    # worth about twice the speed.
     runs-on: ${{ github.event.inputs.runner || 'macos-14' }}
     timeout-minutes: 360
 
     env:
       NODE_VERSION: ${{ github.event.inputs.node_version || '24.21.0' }}
-      # bumped to 2: IPHONEOS_DEPLOYMENT_TARGET is no longer exported, which
-      # changes every compile command, so objects from rev 1 must not be reused
       CACHE_REV: "2"
-      # Every job-level value below uses the github context only. The runner
-      # context is not available here, and referencing it does not fail at the
-      # step -- it makes the whole workflow invalid, so the run dies with zero
-      # jobs and nothing to read. (That is how run #6 failed: runner.temp here.)
       CACHE_DIR: ${{ github.workspace }}/../node-ios-cache
       SRC_DIR: ${{ github.workspace }}/../node-src
 
     steps:
       - uses: actions/checkout@v4
 
-      # Node's configure rejects Python 3.14, which is what the runner ships.
       - name: Pin Python 3.12
         uses: actions/setup-python@v5
         with:
@@ -99,11 +51,8 @@ jobs:
           echo "clang: $(clang --version | head -1)"
           brew list ldid >/dev/null 2>&1 || brew install ldid
           brew list ccache >/dev/null 2>&1 || brew install ccache
+          brew install dpkg || true
 
-      # Publish the machine before the build, not only after it. Which runner a
-      # label actually resolves to is not documented well enough to rely on, and
-      # the difference between the free standard runner and a billed larger one
-      # should be knowable in a minute rather than after a three-hour build.
       - name: Record the machine and publish it
         run: |
           set -eu
@@ -115,8 +64,8 @@ jobs:
             echo "cores:        $(sysctl -n hw.ncpu)"
             echo "ram:          $(( $(sysctl -n hw.memsize) / 1073741824 )) GB"
           } | tee dist/machine.txt
-          git config user.name "dsh-ios ci"
-          git config user.email "noreply@example.com"
+          git config user.name "locationovo"
+          git config user.email "locationovo@outlook.com"
           if git fetch origin ci-logs 2>/dev/null; then
             git checkout -B ci-logs FETCH_HEAD
           else
@@ -128,8 +77,6 @@ jobs:
           git commit -m "machine info for run ${GITHUB_RUN_NUMBER}" || exit 0
           git push --force origin ci-logs
 
-      # The tarball, ccache, and the build tree's out/ directory. out/ is what
-      # makes a repeat run fast; see the note at the top about CACHE_REV.
       - name: Cache source tarball, ccache, and build tree
         uses: actions/cache@v4
         with:
@@ -145,14 +92,52 @@ jobs:
       - name: Patch, configure, build, sign
         run: sh node-ios/build-node-ios.sh
 
+      - name: Package as deb for nodefix
+        run: |
+          set -e
+          PKG_NAME="com.locationovo.node${NODE_VERSION}"
+          PKG_DIR="pkg"
+          mkdir -p ${PKG_DIR}/DEBIAN
+          mkdir -p ${PKG_DIR}/var/jb/usr/local/lib/nodejs/versions/v${NODE_VERSION}/bin
+
+          cp dist/node-v*-iphoneos-arm64 ${PKG_DIR}/var/jb/usr/local/lib/nodejs/versions/v${NODE_VERSION}/bin/node
+          chmod 755 ${PKG_DIR}/var/jb/usr/local/lib/nodejs/versions/v${NODE_VERSION}/bin/node
+
+          cat > ${PKG_DIR}/DEBIAN/control <<EOF
+          Package: ${PKG_NAME}
+          Name: Node.js ${NODE_VERSION} (locationovo fork)
+          Version: ${NODE_VERSION}
+          Architecture: iphoneos-arm64e
+          Description: Node.js ${NODE_VERSION} pre-packaged for nodefix (Based on xlpoistop-prog's CI)
+          Maintainer: locationovo <locationovo@outlook.com>
+          Author: locationovo <locationovo@outlook.com>, XLPOISTOP-prog
+          Section: Development
+          Depends: firmware (>= 15.0), com.locationovo.nodefix, zsh, ldid
+          EOF
+
+          cat > ${PKG_DIR}/DEBIAN/postinst <<'EOF'
+          #!/bin/sh
+          set -e
+          JBROOT=$(ls -dt /var/containers/Bundle/Application/.jbroot-* /var/mobile/Containers/Shared/AppGroup/.jbroot-* 2>/dev/null | head -1 | tr -d '@')
+          if [ -n "$JBROOT" ] && [ -x "$JBROOT/usr/local/bin/nodefix" ]; then
+            mkdir -p "$JBROOT/usr/local/lib/nodejs"
+            echo "v__NODE_VERSION__" > "$JBROOT/usr/local/lib/nodejs/active_version"
+            "$JBROOT/usr/local/bin/nodefix" install || true
+          fi
+          exit 0
+          EOF
+          sed -i '' "s/__NODE_VERSION__/${NODE_VERSION}/g" ${PKG_DIR}/DEBIAN/postinst
+          chmod 755 ${PKG_DIR}/DEBIAN/postinst
+
+          dpkg-deb -Zgzip -b ${PKG_DIR} ${PKG_NAME}_${NODE_VERSION}_iphoneos-arm64e.deb
+
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: node-${{ env.NODE_VERSION }}-iphoneos-arm64
+          name: node-v${{ env.NODE_VERSION }}-deb-locationovo
           path: |
-            dist/node-v*-iphoneos-arm64
+            com.locationovo.node*.deb
             dist/node-v*-iphoneos-arm64.sha256
-            dist/entitlements.plist
           if-no-files-found: error
           retention-days: 30
 
@@ -160,12 +145,6 @@ jobs:
         if: always()
         run: tail -40 dist/build.log || true
 
-      # The job's own log cannot be downloaded without a token, which makes a
-      # failing run unreadable from outside. Publishing it to a branch puts it
-      # behind raw.githubusercontent.com instead, which needs no credentials.
-      #
-      # fetch first, so that when several runs overlap they add to the branch
-      # instead of each force-replacing it with its own single file.
       - name: Publish the build log to the ci-logs branch
         if: always()
         run: |
@@ -174,8 +153,8 @@ jobs:
             echo "no build.log was produced"
             exit 0
           fi
-          git config user.name "dsh-ios ci"
-          git config user.email "noreply@example.com"
+          git config user.name "locationovo"
+          git config user.email "locationovo@outlook.com"
           if git fetch origin ci-logs 2>/dev/null; then
             git checkout -B ci-logs FETCH_HEAD
           else
