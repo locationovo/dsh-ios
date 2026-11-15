@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 05 — repair a code page on the fault, then let the CPU retry.
-
 Why this is needed on top of 04
 -------------------------------
 04 implements V8's W^X hook with mprotect, which is process-wide, while the macOS
@@ -10,16 +9,12 @@ that is RW because *this* thread opened a write scope is also RW for every other
 thread, and a thread fetching an instruction from it faults. V8 also patches
 trampolines lazily, so a page can be left in the wrong mode by a scope that was
 opened and closed around a different page.
-
 Measured on the device, without this patch, with 04 applied:
-
     [DSH-TRAP-WHERE] signal=10 si_code=1 addr=0x11f700c68
     [DSH-TRAP-WHERE] pc=0x11f700c68 lr -> Builtins_InterpreterOnStackReplacement_ToBaseline + 0x8c
     -> Bus error: 10
-
 si_code 1 is BUS_ADRALN, pc == si_addr, and the address is inside the registered
 code range: the page simply was not executable when it was fetched.
-
 What this patch does
 --------------------
 * platform-darwin.cc: FixJitFetchFault(addr) makes the 16 KB page containing a
@@ -30,12 +25,10 @@ What this patch does
   calls the right one and returns, which makes the kernel retry the faulting
   instruction. If the address is outside the range, or the fix fails, the
   original behaviour is unchanged -- the fault is still reported.
-
 node.cc does not include base/platform/platform.h, so it declares what it needs
 at file scope. Declaring a namespace inside a function body is not valid C++, and
 including the header instead pulled in a declaration that was compiled out --
 both of which cost a build each.
-
 With 04+05 the device runs JIT: plain JS, regular expressions, WebAssembly, file
 I/O and multi-million-iteration loops all complete with exit status 0, a
 20M-iteration loop goes from ~1060 ms to ~300 ms, and cold boot to first token
@@ -169,9 +162,9 @@ int FixJitWriteFault(void* addr);
   {
     const ucontext_t* uc = static_cast<const ucontext_t*>(ucontext);
     const uintptr_t pc =
-        static_cast<uintptr_t>(uc->uc_mcontext->__ss.__pc);
-    const uintptr_t far = static_cast<uintptr_t>(
-        reinterpret_cast<void*>(uc->uc_mcontext->__es.__far));
+        reinterpret_cast<uintptr_t>(uc->uc_mcontext->__ss.__pc);
+    const uintptr_t far = reinterpret_cast<uintptr_t>(
+        uc->uc_mcontext->__es.__far);
     if (pc == far && ::v8::base::FixJitFetchFault(reinterpret_cast<void*>(pc))) {
       return;
     }
