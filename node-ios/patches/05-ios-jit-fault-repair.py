@@ -9,12 +9,16 @@ that is RW because *this* thread opened a write scope is also RW for every other
 thread, and a thread fetching an instruction from it faults. V8 also patches
 trampolines lazily, so a page can be left in the wrong mode by a scope that was
 opened and closed around a different page.
+
 Measured on the device, without this patch, with 04 applied:
+
     [DSH-TRAP-WHERE] signal=10 si_code=1 addr=0x11f700c68
     [DSH-TRAP-WHERE] pc=0x11f700c68 lr -> Builtins_InterpreterOnStackReplacement_ToBaseline + 0x8c
     -> Bus error: 10
+
 si_code 1 is BUS_ADRALN, pc == si_addr, and the address is inside the registered
 code range: the page simply was not executable when it was fetched.
+
 What this patch does
 --------------------
 * platform-darwin.cc: FixJitFetchFault(addr) makes the 16 KB page containing a
@@ -25,10 +29,12 @@ What this patch does
   calls the right one and returns, which makes the kernel retry the faulting
   instruction. If the address is outside the range, or the fix fails, the
   original behaviour is unchanged -- the fault is still reported.
+
 node.cc does not include base/platform/platform.h, so it declares what it needs
 at file scope. Declaring a namespace inside a function body is not valid C++, and
 including the header instead pulled in a declaration that was compiled out --
 both of which cost a build each.
+
 With 04+05 the device runs JIT: plain JS, regular expressions, WebAssembly, file
 I/O and multi-million-iteration loops all complete with exit status 0, a
 20M-iteration loop goes from ~1060 ms to ~300 ms, and cold boot to first token
@@ -152,7 +158,7 @@ int FixJitWriteFault(void* addr);
              "  if (!v8::TryHandleWebAssemblyTrapPosix(signo, info, ucontext)) {")
     if probe not in s:
         fail("node.cc: TrapWebAssemblyOrContinue anchor not found")
-    hooked = """void TrapWebAssemblyOrContinue(int signo, siginfo_t* info, void* ucontext) {
+    hooked = '''void TrapWebAssemblyOrContinue(int signo, siginfo_t* info, void* ucontext) {
 #if defined(__APPLE__) && (defined(__arm64__) || defined(__aarch64__))
   // DSH-IOS-JITFIX: repair the page and let the kernel retry the instruction.
   // A fetch fault (pc == far) needs the page executable; a write fault means V8
@@ -161,10 +167,8 @@ int FixJitWriteFault(void* addr);
   // Note this function returns void: returning at all is the retry.
   {
     const ucontext_t* uc = static_cast<const ucontext_t*>(ucontext);
-    const uintptr_t pc =
-        reinterpret_cast<uintptr_t>(uc->uc_mcontext->__ss.__pc);
-    const uintptr_t far = reinterpret_cast<uintptr_t>(
-        uc->uc_mcontext->__es.__far);
+    const uintptr_t pc = reinterpret_cast<uintptr_t>(uc->uc_mcontext->__ss.__pc);
+    const uintptr_t far = reinterpret_cast<uintptr_t>(uc->uc_mcontext->__es.__far);
     if (pc == far && ::v8::base::FixJitFetchFault(reinterpret_cast<void*>(pc))) {
       return;
     }
@@ -173,7 +177,7 @@ int FixJitWriteFault(void* addr);
     }
   }
 #endif  // __APPLE__ && __aarch64__
-  if (!v8::TryHandleWebAssemblyTrapPosix(signo, info, ucontext)) {"""
+  if (!v8::TryHandleWebAssemblyTrapPosix(signo, info, ucontext)) {'''
     s = s.replace(probe, hooked, 1)
     write(NODE_CC, s)
     print("  node.cc: handler repairs the page and retries")
