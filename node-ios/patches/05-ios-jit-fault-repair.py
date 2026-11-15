@@ -124,7 +124,7 @@ s = read(NODE_CC)
 if "FixJitFetchFault" in s:
     print("  node.cc: already hooked up, enforcing reinterpret_cast")
     # 自愈逻辑：如果发现有旧补丁，原地把 static_cast 替换掉，防止缓存导致的编译失败
-    s = s.replace("static_cast<uintptr_t>(uc->uc_mcontext->__ss.__pc)", "reinterpret_cast<uintptr_t>(uc->uc_mcontext->__ss.__pc)")
+    s = s.replace("reinterpret_cast<uintptr_t>(uc->uc_mcontext->__ss.__pc)", "reinterpret_cast<uintptr_t>(uc->uc_mcontext->__ss.__pc)")
     s = s.replace("static_cast<uintptr_t>(\n        reinterpret_cast<void*>(uc->uc_mcontext->__es.__far))", "reinterpret_cast<uintptr_t>(uc->uc_mcontext->__es.__far)")
     write(NODE_CC, s)
 else:
