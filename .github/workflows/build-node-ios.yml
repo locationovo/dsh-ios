@@ -14,7 +14,7 @@ on:
       runner:
         description: "macos-14 = arm64 3 cores/7 GB (free). macos-15-intel = x64"
         required: false
-        default: "macos-14"
+        default: "macos-15"
   push:
     paths:
       - "node-ios/**"
