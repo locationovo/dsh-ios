@@ -163,12 +163,6 @@ JOBS="${JOBS:-$(( CORES < BY_RAM ? CORES : BY_RAM ))}"
 [ "$JOBS" -lt 2 ] && JOBS=2
 [ "$JOBS" -gt 8 ] && JOBS=8
 
-# DSH-IOS: Force replace static_cast to reinterpret_cast in node.cc to bypass CI caching issues.
-if [ -f "src/node.cc" ]; then
-  sed -i '' 's/static_cast<uintptr_t>(uc->uc_mcontext->__ss.__pc)/reinterpret_cast<uintptr_t>(uc->uc_mcontext->__ss.__pc)/g' src/node.cc
-  sed -i '' 's/static_cast<uintptr_t>(/reinterpret_cast<uintptr_t>(/g' src/node.cc
-fi
-
 say "== [4/6] build (make -j$JOBS on $CORES cores / ${RAM_GB} GB)"
 # Record the machine in the log itself. The log is the published artefact, and
 # which machine produced a binary is part of what the binary is: the CPU model

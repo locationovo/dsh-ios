@@ -12,7 +12,7 @@ on:
         required: false
         default: "24.21.0"
       runner:
-        description: "Choose runner: macos-15 (recommended, M1), macos-13 (Intel), macos-14 (unstable)"
+        description: "Runner selection"
         required: false
         default: "macos-15"
   push:
@@ -30,7 +30,7 @@ jobs:
 
     env:
       NODE_VERSION: ${{ github.event.inputs.node_version || '24.21.0' }}
-      CACHE_REV: "4"
+      CACHE_REV: "9"
       CACHE_DIR: ${{ github.workspace }}/../node-ios-cache
       SRC_DIR: ${{ github.workspace }}/../node-src
 
@@ -58,7 +58,7 @@ jobs:
           set -eu
           mkdir -p dist
           {
-            echo "runner label: ${{ github.event.inputs.runner || 'macos-14' }}"
+            echo "runner label: ${{ github.event.inputs.runner || 'macos-15' }}"
             echo "cpu:          $(sysctl -n machdep.cpu.brand_string)"
             echo "arch:         $(uname -m)"
             echo "cores:        $(sysctl -n hw.ncpu)"
@@ -77,20 +77,18 @@ jobs:
           git commit -m "machine info for run ${GITHUB_RUN_NUMBER}" || exit 0
           git push --force origin ci-logs
 
-      - name: Cache source tarball, ccache, and build tree
-        uses: actions/cache@v4
+      - name: Patch, configure, build, sign
+        run: sh node-ios/build-node-ios.sh
+
+      - name: Save cache if success
+        if: success()
+        uses: actions/cache/save@v4
         with:
           path: |
             ${{ env.CACHE_DIR }}
             ~/.ccache
             ${{ env.SRC_DIR }}/node-v${{ env.NODE_VERSION }}/out
           key: node-ios-${{ env.NODE_VERSION }}-rev${{ env.CACHE_REV }}-${{ runner.arch }}
-          restore-keys: |
-            node-ios-${{ env.NODE_VERSION }}-rev${{ env.CACHE_REV }}-
-            node-ios-${{ env.NODE_VERSION }}-
-
-      - name: Patch, configure, build, sign
-        run: sh node-ios/build-node-ios.sh
 
       - name: Package as deb for nodefix
         run: |
